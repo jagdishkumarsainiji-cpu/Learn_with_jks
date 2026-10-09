@@ -6,30 +6,81 @@ on:
     branches:
       - main
 
+permissions:
+  contents: read
+
 jobs:
   build:
+    name: Build Android APK
     runs-on: ubuntu-22.04
 
     steps:
-      - name: Checkout
+      - name: Checkout Repository
         uses: actions/checkout@v4
+
+      - name: Show Project Files
+        run: |
+          echo "Repository files:"
+          ls -la
+          echo "Searching for Gradle project:"
+          find . -maxdepth 5 \
+            \( -name settings.gradle \
+            -o -name settings.gradle.kts \) -print
+
+      - name: Find Android Project
+        id: project
+        shell: bash
+        run: |
+          PROJECT_DIR=""
+          while IFS= read -r file; do
+            dir="${file%/*}"
+            if [ -f "$dir/gradlew" ] || \
+               [ -f "$dir/build.gradle" ] || \
+               [ -f "$dir/build.gradle.kts" ]; then
+              PROJECT_DIR="$dir"
+              break
+            fi
+          done < <(
+            find . -maxdepth 5 -type f \
+              \( -name settings.gradle \
+              -o -name settings.gradle.kts \)
+          )
+
+          if [ -z "$PROJECT_DIR" ]; then
+            echo "ERROR: Android Gradle project not found."
+            echo "Upload the complete Android project first."
+            exit 1
+          fi
+
+          echo "dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
+          echo "Found project: $PROJECT_DIR"
 
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
+          cache: gradle
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.9"
 
-      - name: Build APK
-        run: gradle clean :app:assembleDebug --stacktrace
+      - name: Build Debug APK
+        working-directory: ${{ steps.project.outputs.dir }}
+        run: |
+          if [ -f ./gradlew ]; then
+            chmod +x ./gradlew
+            ./gradlew assembleDebug --stacktrace
+          else
+            gradle assembleDebug --stacktrace
+          fi
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: Learn-With-JKS-APK
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: |
+            **/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
